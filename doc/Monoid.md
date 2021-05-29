@@ -18,13 +18,11 @@
 
 用 Kotlin 代码可以表示为：
 
-```java
+```kotlin
 interface Monoid<T> {
-    T empty();
-    T append(T a, T b);
-    default T appends(Stream<T> x) {
-        return x.reduce(empty(), this::append);
-    }
+    val zero: T
+    fun append(a: T, b: T): T
+    fun appends(x: Iterable<T>): T = x.fold(zero, this::append)
 }
 ```
 
@@ -32,55 +30,47 @@ interface Monoid<T> {
 
 在 Java8 中有个新的类 `Optional` 可以用来表示可能有值的类型，而我们可以对它定义个 Monoid ：
 
-```java
-class OptionalM<T> implements Monoid<Optional<T>> {
-    public Optional<T> empty() {
-        return Optional<T>.empty();
-    }
-    public Optional<T> 
-    append(Optional<T> a, Optional<T> b) {
-        if (a.isPresent()) return a;
-        else return b;
-    }
+```kotlin
+class OptionalM<T> : Monoid<Optional<T>> {
+    override val zero: Optional<T> = Optional.empty()
+    override fun append(a: Optional<T>, b: Optional<T>): Optional<T> = if (a.isPresent) a else b
 }
+
 ```
 
 这样对于 appends 来说我们将获得一串 Optional 中第一个不为空的值，对于需要进行一连串尝试操作可以这样写：
 
-```java
-new OptionalM<int>.appends(Stream.of(try1(), try2(), try3(), try4()))
+```kotlin
+OptionalM<Int>().appends(listof(try1(), try2(), try3(), try4()))
 ```
 
 ## 应用：Ordering
 
 对于 `Comparable` 接口可以构造出：
 
-```java
-class OrderingM implements Monoid<int> {
-    public int empty() { return 0; }
-    public int append(int a, int b) {
-        if (a == 0) return b;
-        else return a;
-    }
+```kotlin
+class OrderingM : Monoid<Int> {
+    override val zero: Int = 0
+    override fun append(a: Int, b: Int): Int = if (a != 0) a else b
 }
 ```
 
 同样如果有一串带有优先级的比较操作就可以用 appends 串起来，比如：
 
-```java
-class Student implements Comparable {
-    String name;
-    String sex;
-    Date birthday;
-    String from;
-    public int compareTo(Object o) {
-        Student s = (Student)(o);
-        return new OrderingM.appends(Stream.of(
-            name.compareTo(s.name),
-            sex.compareTo(s.sex),
-            birthday.compareTo(s.birthday),
-            from.compareTo(s.from)
-        ));
+```kotlin
+data class Student(
+        val name: String,
+        val sex: String,
+        val birthday: Date,
+        val from: String
+) : Comparable<Student> {
+    override fun compareTo(other: Student): Int {
+        return OrderingM().appends(listOf(
+                name.compareTo(other.name),
+                sex.compareTo(other.sex),
+                birthday.compareTo(other.birthday),
+                from.compareTo(other.from),
+        ))
     }
 }
 ```
@@ -91,38 +81,42 @@ class Student implements Comparable {
 
 在 Monoid 接口里面加 default 方法可以支持更多方便的操作：
 
-```java
-interface Monoid<T> {
-    //...
-    default T when(boolean c, T then) {
-        if (c) return then;
-        else return empty();
-    }
-    default T cond(boolean c, T then, T els) {
-        if (c) return then;
-        else return els;
-    }
+```kotlin
+interface MonoidEx<T> {
+    val zero: T
+    fun T.append(other: T): T
+    fun sumOf(x: Iterable<T>): T = x.fold(zero) { a, b -> a.append(b) }
+    fun only(condition: Boolean, then: T): T = if (condition) then else zero
+    fun cond(condition: Boolean, then: T, els: T): T = if (condition) then else els
 }
 
-class Todo implements Monoid<Runnable> {
-    public Runnable empty() {
-        return () -> {};
-    }
-    public Runnable 
-    append(Runnable a, Runnable b) {
-        return () -> { a(); b(); };
-    }
+typealias Runnable = () -> Unit
+
+class Todo : MonoidEx<Runnable> {
+    override val zero: Runnable = {}
+
+    override fun Runnable.append(other: Runnable): Runnable = { this(); other() }
 }
 ```
 
 然后就可以像下面这样使用上面的定义:
 
-```java
-new Todo.appends(Stream.of(
-    logic1,
-    () -> { logic2(); },
-    Todo.when(condition1, logic3)
-))
+```kotlin
+object TodoTest {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        val logic1: Runnable = { println("1") }
+        val logic2: Runnable = { println("2") }
+        val logic3: Runnable = { println("3") }
+        val logic4: Runnable = { println("4") }
+        val todos = Todo().sumOf(listOf(
+                logic1,
+                { logic2() },
+                Todo().cond(false, logic3, logic4)
+        ))
+        todos.invoke()  // 1 2 4
+    }
+}
 ```
 
 > 注：上面的 Optional 并不是 lazy 的，实际运用中加上非空短路能提高效率。
