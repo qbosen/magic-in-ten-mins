@@ -1,8 +1,8 @@
 # 十分钟魔法练习：状态单子
 
-### By 「玩火」
+### By 「玩火」，改写「qbosen」
 
-> 前置技能：Java基础，HKT，Monad
+> 前置技能：Kotlin基础，HKT，Monad
 
 ## 函数容器
 
@@ -29,32 +29,14 @@ System.out.println(i);
 
 最简单的理解就是这样的一个包含函数的对象：
 
-```java
-class State<S, A> 
-    implements HKT<State<S, ?>, A> {
-    
-    Function<S, StateData<A, S>> runState;
-    
-    // Pair alias
-    static class StateData<A, S> {
-        S state;
-        A value;
-        StateData(A v, S s) {
-            state = s;
-            value = v;
-        }
-    }
-    
-    // Constructor
-    State(Function<S, 
-          StateData<A, S>> f) { 
-        runState = f; 
-    }
-    
-    // Transformer
-    static <S, A> State<S, A>
-    narrow(HKT<State<S, ?>, A> v) {
-        return (State<S, A>) v;
+```kotlin
+typealias HKT2<F, A, B> = HKT<HKT<F, A>, B>
+
+data class StateData<A, S>(val value: A, val state: S)
+
+class State<S, A>(val runState: (S) -> StateData<A, S>) : HKT2<State.K, S, A> {
+    object K {
+        fun <S, A> HKT2<K, S, A>.narrow() = this as State<S, A>
     }
 }
 ```
@@ -63,97 +45,55 @@ class State<S, A>
 
 `State` 是一个 Monad （注释中是简化的伪代码）：
 
-```java
-class StateM<S> 
-    implements Monad<State<S, ?>> {
-    
-    public <A> HKT<State<S, ?>, A> 
-    pure(A v) {
-        return new State<>(s -> 
-            new State.StateData<>(v, s));
+```kotlin
+class StateMonad<S> : Monad<HKT<State.K, S>> {
+    override fun <A> pure(a: A): HKT2<State.K, S, A> {
+        return State { s -> StateData(a, s) }
     }
-    
-    // <A, B> State<S, B> 
-    // flatMap(State<S, A> ma, 
-    //     Function<A, State<S, B> f)
-    public <A, B> HKT<State<S, ?>, B>
-    flatMap(HKT<State<S, ?>, A> ma, 
-        Function<A,
-            HKT<State<S, ?>, B>> f) {
-        
-        return new State<>(s -> {
-            
-            // r = ma.runState(s)
-            State.StateData<A, S> r = 
-                State
-                .narrow(ma)
-                .runState
-                .apply(s);
-            
-            // return f(r.value)
-            //     .runState(r.state)
-            return State
-                .narrow(f.apply(r.value))
-                .runState
-                .apply(r.state);
-        });
-    }
-}
 
+    //fun <A,B> State<S, A>.flatMap(f: (A) -> State<S,B>) : State<S, B>
+    override fun <A, B> HKT2<State.K, S, A>.flatMap(f: (A) -> HKT2<State.K, S, B>): HKT2<State.K, S, B> {
+        return State { s ->
+            val r: StateData<A, S> = this.narrow().runState(s)
+            f(r.value).narrow().runState(r.state)
+        }
+    }
 ```
 
 `pure` 操作直接返回当前状态和给定的值， `flatMap` 操作只需要把 `ma` 中的 `A` 取出来然后传给 `f` ，并处理好 `state` 。
 
 仅仅这样的话 `State` 使用起来并不方便，还需要定义一些常用的操作来读取写入状态：
 
-```java
+```kotlin
 // class StateM<S>
 // 读取
-HKT<State<S, ?>, S> get = 
-    new State<>(s -> 
-        new State.StateData<>(s, s));
+val get: HKT2<State.K, S, S> = State { s -> StateData(s, s) }
 // 写入
-HKT<State<S, ?>, S> put(S s) {
-    return new State<>(any -> 
-        new State.StateData<>(any, s));
-}
+fun put(s: S): HKT2<State.K, S, S> = State { StateData(it, s) }
 // 修改
-HKT<State<S, ?>, S> 
-modify(Function<S, S> f) {
-    return new State<>(s -> 
-        new State.StateData<>(
-            s, 
-            f.apply(s)));
-}
+fun modify(f: (S) -> S): HKT2<State.K, S, S> = State { StateData(it, f(it)) }
 ```
 
 使用的话这里举个求斐波那契数列的例子：
 
-```java
-static 
-State<Pair<Integer, Integer>, Integer> 
-fib(Integer n) {
-    StateM<Pair<Integer, Integer>> m = 
-        new StateM<>();
-    if (n == 0) return State.narrow(
-             m.flatMap(m.get,
-        x -> m.pure(x.first)));
-    if (n == 1) return State.narrow(
-             m.flatMap(m.get,
-        x -> m.pure(x.second)));
-    
-    return State.narrow(
-             m.flatMap(m.modify(x -> 
-                 new Pair<>(x.second, 
-                     x.first + x.second)),
-        v -> fib(n - 1)));
+```kotlin
+fun fib(n: Int): State<Pair<Int, Int>, Int> {
+    val monad = StateMonad<Pair<Int, Int>>()
+
+    monad.run {
+        return when (n) {
+            0 -> get.flatMap { pure(it.first) }.narrow()
+            1 -> get.flatMap { pure(it.second) }.narrow()
+            else -> modify { Pair(it.second, it.first + it.second) }.flatMap { fib(n - 1) }.narrow()
+        }
+    }
 }
-public static void main(String[] args) {
-    System.out.println(
-        fib(7)
-        .runState
-        .apply(new Pair<>(0, 1))
-        .value);
+
+object FibTest {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        println(fib(7).runState(Pair(0, 1)).value)  // 13
+    }
 }
 ```
 
