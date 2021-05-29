@@ -1,17 +1,18 @@
 # 十分钟魔法练习：高阶类型
 
-### By 「玩火」
+### By 「玩火」，改写「qbosen」
 
-> 前置技能：Java基础
+> 前置技能：Kotlin基础
 
 ## 常常碰到的困难
 
 写代码的时候常常会碰到语言表达能力不足的问题，比如下面这段用来给 `F` 容器中的值进行映射的代码：
 
+> 这两个例子用 Java 描述，未用kotlin改写，一个意思
+
 ```java
 interface Functor<F> {
-    <A, B>
-    F<B> map(F<A> a, Function<A, B> f);
+    <A, B> F<B> map(F<A> a, Function<A, B> f);
 }
 ```
 
@@ -21,8 +22,7 @@ interface Functor<F> {
 
 ```java
 interface Functor<F> {
-    Object map(Object a, 
-               Function<Object, Object> f);
+    Object map(Object a,  Function<Object, Object> f);
 }
 ```
 
@@ -46,63 +46,63 @@ interface Functor<F> {
 
 首先，我们需要一个中间层：
 
-```java
-interface HKT<F, A> {}
+```kotlin
+interface HKT<F, A>
 ```
 
 然后我们就可以用 `HKT<F, A>` 来表示 `F<A>` ，这样操作完 `HKT<F, A>` 后我们仍然有完整的类型信息来还原 `F<A>` 的类型。
 
 这样，上面 `Functor` 就可以写成：
 
-```java
+```kotlin
 interface Functor<F> {
-    <A, B> 
-    HKT<F, B> map(HKT<F, A> ma, 
-                  Function<A, B> f);
+    fun <A, B> HKT<F, A>.map(f: (A) -> B): HKT<F, B>
 }
 ```
 
 这样就可以编译通过了。而对于想实现 `Functor` 的类，需要先实现 `HKT` 这个中间层，这里拿 `List` 举例：
 
-```java
-class HKTList<A> 
-    implements HKT<HKTList<?>, A> {
-    
-    List<A> value;
-    
-    HKTList() {
-        value = new ArrayList<>();
+```kotlin
+class HKTList<A>(val value: List<A> = ArrayList()) : HKT<HKTList.K, A> {
+    object K {
+        fun <A> HKT<K, A>.narrow() = this as HKTList<A>
+        fun <A> collector(): Collector<A, *, HKTList<A>> {
+            return Collectors.collectingAndThen(Collectors.toList(), ::HKTList)
+        }
     }
-    
-    HKTList(List<A> v) {
-        value = v;
-    }
-    
-    static <T> HKTList<T>
-    narrow(HKT<HKTList<?>, T> v) {
-        return (HKTList<T>) v;
-    }
-    
-    static <T> Collector<T, ?, HKTList<T>>
-    collector() { /* ... */ }
 }
 ```
 
-注意 `HKTList` 把自己作为了 `HKT` 的第一个参数来保存自己的类型信息，这样对于 `HKT<HKTList<?>, T>` 这个接口来说就只有自己这一个子类，而在 `narrow` 函数中可以安全地把这个唯一子类转换回来。
+注意 `HKTList` 把 `HKTList.K` 作为了 `HKT` 的第一个参数来保存自己的类型信息，这样对于 `HKT<HKTList.K, T>` 这个接口来说就只有自己这一个子类，而在 `narrow` 函数中可以安全地把这个唯一子类转换回来。
 
 这样，实现 `Functor` 类就是一件简单的事情了：
 
 ```java
-class ListF
-    implements Functor<HKTList<?>> {
+object ListF : Functor<HKTList.K> {
+    override fun <A, B> HKT<HKTList.K, A>.map(f: (A) -> B): HKT<HKTList.K, B> {
+        return this.narrow().value.stream().map(f).collect(HKTList.K.collector())
+    }
+}
+```
 
-    public <A, B> HKT<HKTList<?>, B>
-    map(HKT<HKTList<?>, A> ma, 
-        Function<A, B> f) {
-        
-        return HKTList.narrow(ma)
-            .value.stream().map(f)
-            .collect(HKTList.collector());
+
+
+测试：
+
+```kotlin
+object ListFTest {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        """output:
+            [1, 2, 3]
+            [s1, s2, s3]
+        """.trimIndent()
+
+        val listA: HKT<HKTList.K, Int> = HKTList(listOf(1, 2, 3)).also { println(it.value) }
+        val listB: HKT<HKTList.K, String> = ListF.run { 
+          	// 使用 receiver 机制导入 object对象 中定义的扩展方法
+            listA.map { "s$it" }.narrow()
+        }.also { println(it.value) }
     }
 }
 ```
