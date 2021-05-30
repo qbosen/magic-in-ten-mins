@@ -1,6 +1,6 @@
 # 十分钟魔法练习 (Kotlin版)
 
-改写自 [十分钟魔法练习-玩火]((https://github.com/niltok/magic-in-ten-mins)) 原版为 Java 实现
+改写自 [十分钟魔法练习-玩火](https://github.com/niltok/magic-in-ten-mins) 原版为 Java 实现
 
 其他版本:
 
