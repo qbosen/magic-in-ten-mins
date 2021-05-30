@@ -30,54 +30,36 @@
 
 首先，我们要用 ADT 定义出 λ 表达式的数据结构：
 
-```java
-interface Expr {};
+```kotlin
+
+interface Expr
+
 // Value 变量
-class Val implements Expr {
-    String x;
-    UUID id;
-    Val(String s) {
-        x = s;
+data class Val(val x: String, val id: UUID? = null) : Expr {
+    override fun toString(): String = x
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as Val
+        if (id != other.id) return false
+        return true
     }
-    Val(String s, UUID id) {
-        x = s;
-        this.id = id;
-    }
-    public String toString() {
-        return x;
-    }
-    public boolean equals(Object obj) {
-        if (obj instanceof Val)
-            return id.equals(((Val) obj).id);
-        return false;
+
+    override fun hashCode(): Int {
+        return id?.hashCode() ?: 0
     }
 }
+
 // Function 函数定义
-class Fun implements Expr {
-    Val x;
-    Expr e;
-    Fun(String s, Expr a) {
-        x = new Val(s);
-        e = a;
-    }
-    Fun(Val s, Expr a) {
-        x = s;
-        e = a;
-    }
-    public String toString() {
-        return "(λ " + x + ". " + e + ")";
-    }
+data class Fun(val x: Val, val e: Expr) : Expr {
+    override fun toString(): String = "(λ $x. $e)"
+
+    constructor(x: String, e: Expr) : this(Val(x), e)
 }
+
 // Apply 函数应用
-class App implements Expr {
-    Expr f, x;
-    App(Expr e1, Expr e2) {
-        f = e1;
-        x = e2;
-    }
-    public String toString() {
-        return "(" + f + " " + x + ")";
-    }
+data class App(val f: Expr, val x: Expr) : Expr {
+    override fun toString(): String = "($f $x)"
 }
 ```
 
@@ -101,76 +83,93 @@ class App implements Expr {
 
 然后就可以构造 λ 表达式了，比如 `(λ x. x (λ x. x)) y` 就可以这样构造：
 
-```java
-Expr expr = new App(
-    new Fun("x", 
-        new App(new Val("x"), 
-            new Fun("x", new Val("x")))), 
-    new Val("y"));
+```kotlin
+val expr = App(Fun("x", App(Val("x"), Fun("x", Val("x")))), Val("y"))
 ```
 
 然后就可以定义归约函数 `reduce` 和应用自由变量函数 `apply` 还有用来生成 `UUID` 的 `genUUID` 函数和 `applyUUID` 函数：
 
-```java
+```kotlin
+
 interface Expr {
-    Expr reduce();
-    Expr apply(Val v, Expr ex);
-    Expr genUUID();
-    Expr applyUUID(Val v);
+    fun reduce(): Expr
+    fun apply(v: Val, ex: Expr): Expr
+    fun genUUID(): Expr
+    fun applyUUID(v: Val): Expr
 }
 
-class Val implements Expr {
-    public Expr reduce() { return this; }
-    public Expr apply(Val v, Expr ex) {
-        if (equals(v)) return ex;
-        return this;
+// Value 变量
+data class Val(val x: String, val id: UUID? = null) : Expr {
+    override fun toString(): String = x
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as Val
+        if (id != other.id) return false
+        return true
     }
-    public Expr genUUID() {
-        return this;
+
+    override fun hashCode(): Int {
+        return id?.hashCode() ?: 0
     }
-    public Expr applyUUID(Val a) {
-        if (x.equals(a.x)) return new Val(x, a.id);
-        return this;
-    }
+
+    override fun reduce(): Expr = this
+
+    override fun apply(v: Val, ex: Expr): Expr = if (this == v) ex else this
+
+    override fun genUUID(): Expr = this
+
+    override fun applyUUID(v: Val): Expr = if (x == v.x) Val(x, v.id) else this
 }
 
-class Fun implements Expr {
-    public Expr reduce() { return this; }
-    public Expr apply(Val v, Expr ex) {
-        if (v.equals(x)) return this;
-        return new Fun(x, e.apply(v, ex));
-    }
-    public Expr genUUID() {
+// Function 函数定义
+data class Fun(val x: Val, val e: Expr) : Expr {
+    override fun toString(): String = "(λ $x. $e)"
+
+    constructor(x: String, e: Expr) : this(Val(x), e)
+
+    override fun reduce(): Expr = this
+
+    override fun apply(v: Val, ex: Expr): Expr = if (v == x) this else Fun(x, e.apply(v, ex))
+
+    override fun genUUID(): Expr {
         if (x.id == null) {
-            Val v = new Val(x.x, UUID.randomUUID());
-            return new Fun(v, e.applyUUID(v).genUUID());
+            val v = Val(x.x, UUID.randomUUID())
+            return Fun(v, e.applyUUID(v).genUUID())
         }
-        return new Fun(x, e.genUUID());
+        return Fun(x, e.genUUID())
     }
-    public Expr applyUUID(Val v) {
-        if (x.x.equals(v.x)) return this;
-        return new Fun(x, e.applyUUID(v));
+
+    override fun applyUUID(v: Val): Expr {
+        return if (x.x == v.x) this else Fun(x, e.applyUUID(v))
+
+
     }
 }
 
-class App implements Expr {
-    public Expr reduce() {
-        Expr fr = f.reduce();
-        if (fr instanceof Fun) {
-            Fun fun = (Fun) fr;
-            return fun.e.apply(fun.x, x).reduce();
+// Apply 函数应用
+data class App(val f: Expr, val x: Expr) : Expr {
+    override fun toString(): String = "($f $x)"
+
+    override fun reduce(): Expr {
+        val fr = f.reduce()
+        if (fr is Fun) {
+            val (x1, e) = fr
+            return e.apply(x1, x).reduce()
         }
-        return new App(fr, x);
+        return App(fr, x)
     }
-    public Expr apply(Val v, Expr ex) {
-        return new App(f.apply(v, ex),
-                       x.apply(v, ex));
+
+    override fun apply(v: Val, ex: Expr): Expr {
+        return App(f.apply(v, ex), x.apply(v, ex))
     }
-    public Expr genUUID() {
-        return new Fun(f.genUUID(), x.genUUID());
+
+    override fun genUUID(): Expr {
+        return App(f.genUUID(), x.genUUID())
     }
-    public Expr applyUUID(Val v) {
-        return new Fun(f.applyUUID(v), x.applyUUID(v));
+
+    override fun applyUUID(v: Val): Expr {
+        return App(f.applyUUID(v), x.applyUUID(v))
     }
 }
 
@@ -179,4 +178,26 @@ class App implements Expr {
 注意在 `reduce` 一个表达式之前应该先调用 `genUUID` 来生成变量标签否则会抛出空指针异常。
 
 以上就是 100 行 Java 写成的解释器啦！
+
+
+
+测试：
+
+```kotlin
+object LambdaTest {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        // `(λ x. x (λ x. x)) y`
+        val fx = Fun("x", Val("x")) // (λ x. x)
+        val expr = App(Fun("x", App(Val("x"), fx)), Val("y"))
+        println(expr)   // ((λ x. (x (λ x. x))) y)
+
+        // λ z. (λ x. (λ z. x)) z
+        val expr2 = App(Fun("z", Fun("x", Fun("z", Val("x")))), Val("z"))
+        println(expr2.reduce()) // (λ x. (λ z. x))
+    }
+}
+```
+
+
 
