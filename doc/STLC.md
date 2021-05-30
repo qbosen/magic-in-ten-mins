@@ -1,8 +1,8 @@
 # 十分钟魔法练习：简单类型 λ 演算
 
-### By 「玩火」
+### By 「玩火」，改写「qbosen」
 
-> 前置技能：Java 基础，ADT，λ 演算
+> 前置技能：Kotlin 基础，ADT，λ 演算
 
 ## 简单类型 λ 演算
 
@@ -17,24 +17,19 @@ FunctionType = Type * Type
 
 注意函数类型的符号是右结合的，也就是说 `A → A → A` 等价于 `A → (A → A)` 。
 
-用 Java 代码可以表示为：
+用 Kotlin 代码可以表示为：
 
-```java
-// 构造函数， equals 已省去
-interface Type {}
+```kotlin
+interface Type
+
 // BaseType
-class TVal implements Type {
-    String name;
-    public String toString() {
-        return name;
-    }
+data class TVal(val name: String) : Type {
+    override fun toString(): String = name
 }
+
 // FunctionType
-class TArr implements Type {
-    Type src, tar;
-    public String toString() {
-        return "(" + src + " → " + tar + ")";
-    }
+data class TArr(val src: Type, val tar: Type) : Type {
+    override fun toString(): String = "($src -> $tar)"
 }
 ```
 
@@ -42,38 +37,31 @@ class TArr implements Type {
 
 然后需把类型嵌入到 λ 演算的语法树中：
 
-```java
-// 构造函数， toString 已省去
-class Val implements Expr {
-    String x;
-    Type type;
-}
-class Fun implements Expr {
-    Val x;
-    Expr e;
-}
-class App implements Expr {
-    Expr f, x;
-}
+```kotlin
+interface Expr
+data class Val(val x: String, val type: Type? = null) : Expr
+data class Fun(val x: Val, val e: Expr) : Expr
+data class App(val f: Expr, val x: Expr) : Expr
 ```
 
 注意只有函数定义的变量需要标记类型，表达式的类型是可以被简单推导出的。同时还需要一个环境来保存定义变量的类型（其实是一个不可变链表）：
 
-```java
+```kotlin
+class BadTypeException : RuntimeException()
 interface Env {
-    Type lookup(String s) throws BadTypeException;
+    @Throws(BadTypeException::class)
+    fun lookup(s: String): Type
 }
-class NilEnv implements Env {
-    public Type lookup(String s) throws BadTypeException {
-        throw new BadTypeException();
+
+class NilEnv : Env {
+    override fun lookup(s: String): Type {
+        throw BadTypeException()
     }
 }
-class ConsEnv implements Env {
-    Val v;
-    Env next;
-    public Type lookup(String s) throws BadTypeException {
-        if (s.equals(v.x)) return v.type;
-        return next.lookup(s);
+
+class ConsEnv(val v: Val, val next: Env) : Env {
+    override fun lookup(s: String): Type {
+        return if (s == v.x && v.type != null) v.type else next.lookup(s)
     }
 }
 ```
@@ -82,31 +70,32 @@ class ConsEnv implements Env {
 
 而类型推导也很简单：变量的类型就是它被标记的类型；函数定义的类型就是以它变量的标记类型为源，它函数体的类型为目标的函数类型；而函数应用的类型就是函数的目标类型，在能通过类型检查的情况下。
 
-以上用 Java 代码描述就是：
+以上用 Kotlin 代码描述就是：
 
-```java
-// 构造函数， toString 已省去
+```kotlin
 interface Expr {
-    Type checkType(Env env) throws BadTypeException;
+    fun checkType(env: Env): Type
 }
-class Val implements Expr {
-    public Type checkType(Env env) throws BadTypeException {
-        if (type != null) return type;
-        return env.lookup(x);
+
+data class Val(val x: String, val type: Type? = null) : Expr {
+    override fun checkType(env: Env): Type {
+        return type ?: env.lookup(x)
     }
 }
-class Fun implements Expr {
-    public Type checkType(Env env) throws BadTypeException {
-    	return new TArr(x.type, e.checkType(new ConsEnv(x, env)));
+
+data class Fun(val x: Val, val e: Expr) : Expr {
+    override fun checkType(env: Env): Type {
+        return TArr(x.checkType(env), e.checkType(ConsEnv(x, env)))
     }
 }
-class App implements Expr {
-    public Type checkType(Env env) throws BadTypeException {
-        Type tf = f.checkType(env);
-        if (tf instanceof TArr &&
-                ((TArr) tf).src.equals(x.checkType(env)))
-            return ((TArr) tf).tar;
-        else throw new BadTypeException();
+
+data class App(val f: Expr, val x: Expr) : Expr {
+    override fun checkType(env: Env): Type {
+        val tf: Type = f.checkType(env)
+        if (tf is TArr && tf.src == x.checkType(env)) {
+            return tf.tar
+        }
+        throw BadTypeException()
     }
 }
 ```
@@ -119,13 +108,21 @@ class App implements Expr {
 
 进行了类型检查，会打印输出 `(int → ((int → bool) → bool))` ：
 
-```java
-public interface STLambda {
-    static void main(String[] args) throws BadTypeException {
-        System.out.println(
-            new Fun(new Val("x", new TVal("int")),
-            new Fun(new Val("y", new TArr(new TVal("int"), new TVal("bool"))),
-                new App(new Val("y"), new Val("x")))).checkType(new NilEnv()));
+```kotlin
+object STLambda {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        // (λ (x: int). (λ (y: int → bool). (y x)))
+        val x = Val("x", TVal("int"))   // (x:int)
+        val y = Val("y", TArr(TVal("int"), TVal("bool")))   // (y:int->bool)
+        val app = App(Val("y"), Val("x"))   // (y x)
+        val f2 = Fun(y, app)    // (λ (y: int → bool). (y x))
+        val f = Fun(x, f2)  // (λ (x: int). (λ (y: int → bool). (y x)))
+        println(f.checkType(NilEnv))    // output: (int -> ((int -> bool) -> bool))
+
+        // (λ (x: bool). (λ (y: int → bool). (y x)))
+        val x2 = Val("x", TVal("bool"))
+        assertFailsWith(BadTypeException::class) { println(Fun(x2, f2).checkType(NilEnv)) }
     }
 }
 ```
